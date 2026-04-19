@@ -1,15 +1,18 @@
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+@import 'tailwindcss';
+
+@theme {
+  --color-page: #f9f9f5;
+  --color-olive: #4a4e31;
+  --font-serif-display: 'Lora', 'Georgia', serif;
+  --font-sans-ui: 'DM Sans', system-ui, sans-serif;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.5;
-  color: #171717;
-  background: #fafafa;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  background-color: var(--color-page);
+  color: #1a1a1a;
+  -webkit-font-smoothing: antialiased;
 }
 
 #root {
