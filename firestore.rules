@@ -1,0 +1,207 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - name: string (required, max 100 chars)
+    //   - email: string (required, valid email)
+    //   - role: string (required, 'user' or 'admin')
+    //   - photoUrl: string (optional)
+    //
+    // Collection: workshops
+    // Document ID: {workshopId}
+    // Fields:
+    //   - title: string (required, max 100 chars)
+    //   - description: string (required, max 2000 chars)
+    //   - date: string (required, YYYY-MM-DD)
+    //   - time: string (required, HH:MM)
+    //   - price: number (required, >= 0)
+    //   - imageUrl: string (required, valid URL)
+    //   - capacity: number (required, > 0)
+    //   - bookedCount: number (required, >= 0)
+    //   - location: string (required, max 200 chars)
+    //   - avgRating: number (optional, 0-5)
+    //   - reviewCount: number (optional, >= 0)
+    //
+    // Collection: bookings
+    // Document ID: {bookingId}
+    // Fields:
+    //   - userId: string (required, matches auth uid)
+    //   - workshopId: string (required)
+    //   - status: string (required, 'confirmed' or 'cancelled')
+    //   - createdAt: string (required, ISO 8601)
+    //   - cancelledAt: string (optional, ISO 8601)
+    //
+    // Collection: reviews
+    // Document ID: {reviewId}
+    // Fields:
+    //   - workshopId: string (required)
+    //   - userId: string (required, matches auth uid)
+    //   - userName: string (required)
+    //   - userPhotoUrl: string (optional)
+    //   - rating: number (required, 1-5)
+    //   - comment: string (required, max 1000 chars)
+    //   - createdAt: string (required, ISO 8601)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Super-admin email: keep in sync with VITE_ADMIN_EMAIL in the deployed web app.
+    function isAdmin() {
+      return isAuthenticated() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (request.auth.token.email == "taipan27.game@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}$");
+    }
+
+    function isValidTimeString(timeStr) {
+      return timeStr is string && timeStr.matches("^\\d{2}:\\d{2}$");
+    }
+
+    function isValidDateTimeString(dateStr) {
+      return dateStr is string && dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['name', 'email', 'role', 'photoUrl']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['user', 'admin'] &&
+             (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 800000));
+    }
+
+    function isValidWorkshop(data) {
+      return hasOnlyAllowedFields(['title', 'description', 'date', 'time', 'price', 'imageUrl', 'capacity', 'bookedCount', 'location', 'avgRating', 'reviewCount']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.description is string && data.description.size() > 0 && data.description.size() <= 2000 &&
+             isValidDateString(data.date) &&
+             isValidTimeString(data.time) &&
+             data.price is number && data.price >= 0 &&
+             isValidUrl(data.imageUrl) && data.imageUrl.size() <= 500 &&
+             data.capacity is number && data.capacity > 0 &&
+             data.bookedCount is number && data.bookedCount >= 0 && data.bookedCount <= data.capacity &&
+             data.location is string && data.location.size() > 0 && data.location.size() <= 200 &&
+             (!('avgRating' in data) || (data.avgRating is number && data.avgRating >= 0 && data.avgRating <= 5)) &&
+             (!('reviewCount' in data) || (data.reviewCount is number && data.reviewCount >= 0));
+    }
+
+    function isValidBooking(data) {
+      return hasOnlyAllowedFields(['userId', 'workshopId', 'status', 'createdAt', 'cancelledAt']) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.workshopId is string && data.workshopId.size() > 0 &&
+             data.status in ['confirmed', 'cancelled'] &&
+             isValidDateTimeString(data.createdAt) &&
+             (!('cancelledAt' in data) || data.cancelledAt == null || isValidDateTimeString(data.cancelledAt));
+    }
+
+    function isValidReview(data) {
+      return hasOnlyAllowedFields(['workshopId', 'userId', 'userName', 'userPhotoUrl', 'rating', 'comment', 'createdAt']) &&
+             data.workshopId is string && data.workshopId.size() > 0 &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.userName is string && data.userName.size() > 0 && data.userName.size() <= 100 &&
+             (!('userPhotoUrl' in data) || (data.userPhotoUrl is string && data.userPhotoUrl.size() <= 800000)) &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5 &&
+             data.comment is string && data.comment.size() <= 1000 &&
+             isValidDateTimeString(data.createdAt);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /mail/{mailId} {
+      allow create: if isAuthenticated() && request.resource.data.to == request.auth.token.email;
+      allow read: if false; // Only backend extension reads this
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == 'user') || isAdmin()
+      );
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /workshops/{workshopId} {
+      allow read: if true; // Publicly readable
+      allow create: if isAdmin() && isValidWorkshop(request.resource.data);
+      allow update: if (isAdmin() && isValidWorkshop(request.resource.data)) || (
+        isAuthenticated() && 
+        (
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bookedCount']) &&
+            request.resource.data.bookedCount is number &&
+            request.resource.data.bookedCount >= 0 &&
+            request.resource.data.bookedCount <= resource.data.capacity &&
+            math.abs(request.resource.data.bookedCount - resource.data.bookedCount) == 1
+          ) ||
+          (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['avgRating', 'reviewCount']) &&
+            request.resource.data.avgRating is number && request.resource.data.avgRating >= 0 && request.resource.data.avgRating <= 5 &&
+            request.resource.data.reviewCount is number && request.resource.data.reviewCount == resource.data.reviewCount + 1
+          )
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidBooking(request.resource.data);
+      allow update: if isAuthenticated() && isValidBooking(request.resource.data) && (
+        (resource.data.userId == request.auth.uid && request.resource.data.userId == resource.data.userId && request.resource.data.workshopId == resource.data.workshopId && request.resource.data.createdAt == resource.data.createdAt) || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidReview(request.resource.data) &&
+        get(/databases/$(database)/documents/bookings/$(request.auth.uid + '_' + request.resource.data.workshopId)).data.status == 'confirmed';
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+  }
+}
